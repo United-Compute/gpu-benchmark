@@ -1,14 +1,7 @@
 # src/gpu_benchmark/main.py
-from .benchmarks import stable_diffusion_1_5, qwen3_0_6b, nanogpt_train
 from .database import upload_benchmark_results
 import argparse
 import torch 
-
-# Import benchmark runners dynamically or add specific imports here later
-# For now, let's assume functions like run_stable_diffusion_benchmark, run_llm_benchmark
-# will be available from src.gpu_benchmark.benchmarks
-# from .benchmarks import stable_diffusion # This will be created
-# from .utils import get_clean_platform # This will be created, assuming get_clean_platform moves to utils
 
 def main():
     """Entry point for the GPU benchmark command-line tool."""
@@ -39,8 +32,10 @@ def main():
     # Fixed duration
     duration = 300  # 300 seconds
     
+    # Lazy import benchmarks - only load what's needed
     results = None
     if args.model == "stable-diffusion-1-5":
+        from .benchmarks import stable_diffusion_1_5
         print("Loading Stable Diffusion 1.5 pipeline...")
         pipe = stable_diffusion_1_5.load_pipeline() 
         print("Pipeline loaded successfully!")
@@ -48,12 +43,14 @@ def main():
         print("Running Stable Diffusion 1.5 benchmark...")
         results = stable_diffusion_1_5.run_benchmark(pipe=pipe, duration=duration)
     elif args.model == "qwen3-0-6b":
+        from .benchmarks import qwen3_0_6b
         print("Loading Qwen3-0-6B model...")
         model, tokenizer = qwen3_0_6b.load_pipeline()
         
         print("Running Qwen3-0-6B benchmark...")
         results = qwen3_0_6b.run_benchmark(model=model, tokenizer=tokenizer, duration=duration)
     elif args.model == "nanogpt-train":
+        from .benchmarks import nanogpt_train
         print("Loading nanoGPT for training benchmark...")
         pipeline = nanogpt_train.load_pipeline()
         print("Model loaded successfully!")
