@@ -1,6 +1,6 @@
 # GPU Benchmark by [United Compute](https://www.unitedcompute.ai)
 
-A simple CLI tool to benchmark your GPU's performance with Stable Diffusion and compare results in our global benchmark results.
+A simple CLI tool to benchmark your GPU's performance across various AI models (Stable Diffusion, LLMs, etc.) and compare results in our global benchmark results.
 
 ![United Compute Logo](https://www.unitedcompute.ai/logo.png)
 
@@ -18,19 +18,31 @@ Run the benchmark (takes 5 minutes after the pipeline is loaded):
 gpu-benchmark
 ```
 
+### Available Benchmarks
+
+You can specify which model to benchmark using the `--model` flag:
+
+**Stable Diffusion 1.5 (Default)**
+```bash
+gpu-benchmark --model stable-diffusion-1-5
+```
+
+**Qwen 3.0 6B (LLM Inference)**
+```bash
+gpu-benchmark --model qwen3-0-6b
+```
+
+**nanoGPT (LLM Training)**
+```bash
+gpu-benchmark --model nanogpt-train
+```
+
 ### Optional Arguments
 
 If you're running on a cloud provider, specify it with the `--provider` flag:
 
 ```bash
 gpu-benchmark --provider runpod
-```
-
-You can specify the model to use for the benchmark with the `--model` flag. By default, the Stable Diffusion 1.5 model is used.
-Example for running a different model:
-
-```bash
-gpu-benchmark --model qwen3-0-6b
 ```
 
 For multi-GPU systems, you can select a specific GPU like this:
@@ -43,9 +55,9 @@ gpu-benchmark --gpu 1  # Uses GPU index 1
 
 The tool will:
 
-1. Load a Stable Diffusion pipeline
-2. Generate images for 5 minutes
-3. Count image generations and track GPU temperature
+1. Load the selected model (Stable Diffusion, Qwen, or nanoGPT)
+2. Run the benchmark for 5 minutes
+3. Track performance metrics (throughput/iterations) and GPU temperature
 4. Upload results to the [United Compute Benchmark Results](https://www.unitedcompute.ai/gpu-benchmark)
 
 ## What it measures
