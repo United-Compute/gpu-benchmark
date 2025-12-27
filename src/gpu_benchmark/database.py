@@ -49,6 +49,8 @@ def upload_benchmark_results(model_name: str, primary_metric_value: int, max_tem
         table_name = "stable-diffusion-1-5"
     elif model_name == "qwen3-0-6b":
         table_name = "qwen3-0-6b"
+    elif model_name == "nanogpt-train":
+        table_name = "nanogpt-train"
     else:
         err_msg = f"Unsupported model_name '{model_name}' for database upload."
         print(f"❌ {err_msg}")
@@ -71,7 +73,9 @@ def upload_benchmark_results(model_name: str, primary_metric_value: int, max_tem
     # Add additional fields if provided.
     additional_fields_expected = [
         "gpu_power_watts", "gpu_memory_total", "platform", 
-        "acceleration", "torch_version"
+        "acceleration", "torch_version",
+        # Training benchmark specific fields
+        "iterations", "tokens_per_sec", "train_loss"
     ]
     
     for field in additional_fields_expected:

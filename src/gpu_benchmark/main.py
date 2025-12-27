@@ -1,5 +1,5 @@
 # src/gpu_benchmark/main.py
-from .benchmarks import stable_diffusion_1_5, qwen3_0_6b
+from .benchmarks import stable_diffusion_1_5, qwen3_0_6b, nanogpt_train
 from .database import upload_benchmark_results
 import argparse
 import torch 
@@ -19,9 +19,9 @@ def main():
     parser.add_argument(
         "--model", 
         type=str, 
-        help="Model to benchmark (e.g., stable-diffusion-1-5, qwen3-0-6b)", 
+        help="Model to benchmark (e.g., stable-diffusion-1-5, qwen3-0-6b, nanogpt-train)", 
         default="stable-diffusion-1-5",
-        choices=["stable-diffusion-1-5", "qwen3-0-6b"]
+        choices=["stable-diffusion-1-5", "qwen3-0-6b", "nanogpt-train"]
     )
     args = parser.parse_args()
     
@@ -53,6 +53,13 @@ def main():
         
         print("Running Qwen3-0-6B benchmark...")
         results = qwen3_0_6b.run_benchmark(model=model, tokenizer=tokenizer, duration=duration)
+    elif args.model == "nanogpt-train":
+        print("Loading nanoGPT for training benchmark...")
+        pipeline = nanogpt_train.load_pipeline()
+        print("Model loaded successfully!")
+        
+        print("Running nanoGPT training benchmark...")
+        results = nanogpt_train.run_benchmark(pipeline=pipeline, duration=duration)
     else:
         print(f"Error: Model {args.model} not supported.")
         return
@@ -75,6 +82,25 @@ def main():
             max_temp_val = results.get('max_temp')
             avg_temp_val = results.get('avg_temp')
             gpu_memory_val = results.get('gpu_memory_total')
+        elif args.model == "nanogpt-train":
+            max_temp_val = results.get('max_temp')
+            avg_temp_val = results.get('avg_temp')
+            gpu_memory_val = results.get('gpu_memory_total')
+        
+        # Build extra kwargs for training benchmarks
+        extra_kwargs = {
+            'gpu_power_watts': results.get('gpu_power_watts'),
+            'gpu_memory_total': gpu_memory_val,
+            'platform': results.get('platform'),
+            'acceleration': results.get('acceleration'),
+            'torch_version': results.get('torch_version')
+        }
+        
+        # Add training-specific metrics
+        if args.model == "nanogpt-train":
+            extra_kwargs['iterations'] = results.get('iterations')
+            extra_kwargs['tokens_per_sec'] = results.get('tokens_per_sec')
+            extra_kwargs['train_loss'] = results.get('train_loss')
         
         # The upload_benchmark_results function will print the success message and ID.
         upload_benchmark_results(
@@ -83,27 +109,24 @@ def main():
             max_temp=max_temp_val,
             avg_temp=avg_temp_val,
             cloud_provider=provider,
-            gpu_power_watts=results.get('gpu_power_watts'),
-            gpu_memory_total=gpu_memory_val, 
-            platform=results.get('platform'),
-            acceleration=results.get('acceleration'),
-            torch_version=results.get('torch_version')
+            **extra_kwargs
         )
         
         print("Benchmark completed") # Final confirmation message
     elif results and results.get("error"):
         print(f"\nBenchmark failed: {results.get('error')}")
-    elif results is None and args.model != "stable-diffusion-1-5" and args.model != "qwen3-0-6b": # Model not supported
+    elif results is None and args.model not in ["stable-diffusion-1-5", "qwen3-0-6b", "nanogpt-train"]:
         pass # Error already printed
     else:
         print("\nBenchmark was canceled or did not complete. Results not submitted.")
-        if results and results.get("reason") == "canceled":
-             # When printing items processed before cancellation, also use 'result'
-             items_before_cancel = results.get('result', 0)
-             if args.model == "qwen3-0-6b":
-                  print(f"Generations processed before cancellation: {items_before_cancel}")
-             elif args.model == "stable-diffusion-1-5":
-                  print(f"Images generated before cancellation: {items_before_cancel}")
+        if results:
+            iterations_before_cancel = results.get('iterations', 0)
+            if args.model == "qwen3-0-6b":
+                print(f"Generations processed before cancellation: {results.get('result', 0)}")
+            elif args.model == "stable-diffusion-1-5":
+                print(f"Images generated before cancellation: {results.get('result', 0)}")
+            elif args.model == "nanogpt-train":
+                print(f"Training iterations before cancellation: {iterations_before_cancel}")
 
 if __name__ == "__main__":
     main()
