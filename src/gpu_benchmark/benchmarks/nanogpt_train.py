@@ -347,7 +347,15 @@ def load_pipeline():
     torch.backends.cudnn.allow_tf32 = True
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    dtype = torch.float16
+    
+    # Use bfloat16 if available, otherwise float16
+    device_type = 'cuda' if 'cuda' in device else 'cpu'
+    if device_type == 'cuda' and torch.cuda.is_bf16_supported():
+        dtype = torch.bfloat16
+        print("Using bfloat16")
+    else:
+        dtype = torch.float16
+        print("Using float16")
     
     # Prepare data
     train_data, val_data = prepare_data()
@@ -376,9 +384,6 @@ def load_pipeline():
         except Exception as e:
             print(f"torch.compile not available, using eager mode: {e}")
     
-    # Cast to float16
-    model = model.to(dtype)
-    
     # Create optimizer
     optimizer = model.configure_optimizers(
         weight_decay=TRAIN_CONFIG['weight_decay'],
@@ -388,7 +393,8 @@ def load_pipeline():
     )
     
     # Create gradient scaler for mixed precision
-    scaler = torch.amp.GradScaler('cuda')
+    # Only enabled for float16, as bfloat16 doesn't need scaling
+    scaler = torch.amp.GradScaler('cuda', enabled=(dtype == torch.float16))
     
     return {
         'model': model,
