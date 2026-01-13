@@ -2,10 +2,16 @@
 import torch
 import time
 from tqdm import tqdm
-import pynvml
 from diffusers import StableDiffusionPipeline
 import platform
 import os
+
+if hasattr(torch.version, "hip"):
+    gpuType = "AMD"
+    import amdsmi
+else:
+    gpuType = "Nvidia"
+    import pynvml
 
 def get_clean_platform():
     os_platform = platform.system()
@@ -38,8 +44,11 @@ def load_pipeline():
 
 def get_nvml_device_handle():
     """Get the correct NVML device handle for the GPU being used."""
-    pynvml.nvmlInit()
-    
+    if gpuType == "AMD":
+        amdsmi.amdsmi_init()
+    else:
+        pynvml.nvmlInit()
+
     # Check CUDA_VISIBLE_DEVICES first
     cuda_visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES')
     if cuda_visible_devices is not None:
@@ -47,117 +56,180 @@ def get_nvml_device_handle():
             # When CUDA_VISIBLE_DEVICES is set, the first (and only) visible GPU
             # becomes index 0 to CUDA, but we need to use the original index for NVML
             original_gpu_index = int(cuda_visible_devices.split(',')[0])
-            handle = pynvml.nvmlDeviceGetHandleByIndex(original_gpu_index)
+            if gpuType == "AMD":
+                handle = amdsmi.amdsmi_get_processor_handles()[original_gpu_index]
+            else:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(original_gpu_index)
             return handle
         except (ValueError, IndexError):
             print(f"Warning: Could not parse CUDA_VISIBLE_DEVICES={cuda_visible_devices}")
     
     # Fallback to current CUDA device
     cuda_idx = torch.cuda.current_device()
-    return pynvml.nvmlDeviceGetHandleByIndex(cuda_idx)
+    if gpuType == "AMD":
+        return amdsmi.amdsmi_get_processor_handles()[cuda_idx]
+    else:
+        return pynvml.nvmlDeviceGetHandleByIndex(cuda_idx)
+
+def getTemperature(handle, isFinalTemp):
+    if gpuType == "AMD":
+        try:
+            return amdsmi.amdsmi_get_temp_metric(handle, amdsmi.AmdSmiTemperatureType.EDGE, amdsmi.AmdSmiTemperatureMetric.CURRENT)
+        except amdsmi.AmdSmiException as e:
+            if "Uninitialized" not in str(e) or torch.cuda.is_available():
+                if isFinalTemp:
+                    print(f"AMDSMI warning (temperature): {e}")
+                else:
+                    print(f"NVML warning (final temperature): {e}")
+    else:
+        try:
+            return pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        except pynvml.NVMLError as e:
+            if "Uninitialized" not in str(e) or torch.cuda.is_available(): # Log if not expected
+                if isFinalTemp:
+                    print(f"AMDSMI warning (temperature): {e}")
+                else:
+                    print(f"NVML warning (final temperature): {e}")
+
+def getPowerUsage(handle):
+    if gpuType == "AMD":
+        try:
+            return amdsmi.amdsmi_get_power_info(handle)['average_socket_power']
+        except amdsmi.AmdSmiException as e:
+            if "Uninitialized" not in str(e) or torch.cuda.is_available():
+                print(f"AMDSMI warning (power): {e}")
+    else:
+        try:
+            return round(pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0, 2)  # mW to W 2 decimal places
+        except pynvml.NVMLError as e:
+            if "Uninitialized" not in str(e) and "Not Supported" not in str(e) or torch.cuda.is_available():
+                    print(f"NVML warning (power): {e}")
+
+def getMemoryInfo(handle):
+    if gpuType == "AMD":
+        try:
+            return round(amdsmi.amdsmi_get_gpu_memory_total(handle, amdsmi.amdsmi_interface.AmdSmiMemoryType.VRAM) / (1024**3), 2) # bytes to GB
+        except amdsmi.AmdSmiException as e:
+            if "Uninitialized" not in str(e) or torch.cuda.is_available():
+                print(f"AMDSMI warning (memory info): {e}")
+    else:
+        try:
+            return round(pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024**3), 2) # bytes to GB
+        except pynvml.NVMLError as e:
+            if "Uninitialized" not in str(e) or torch.cuda.is_available():
+                print(f"NVML warning (memory info): {e}")
+
+def handleCleanup():
+    if gpuType == "AMD":
+        amdsmi.amdsmi_shut_down()
+    else:
+        pynvml.nvmlShutdown()
 
 def run_benchmark(pipe, duration):
     """Run the GPU benchmark for the specified duration in seconds."""
+
     # Get the correct NVML handle for the GPU being used
     handle = get_nvml_device_handle()
-    
+
     # Setup variables
     image_count = 0
     total_gpu_time = 0
     temp_readings = []
     power_readings = []
-    
+
     # Start benchmark
     start_time = time.time()
     end_time = start_time + duration
     prompt = "a photo of an astronaut riding a horse on mars"
-    
+
     try:
         # Disable progress bar for the pipeline
         pipe.set_progress_bar_config(disable=True)
-        
+
         # Create a progress bar for the entire benchmark
         with tqdm(total=100, desc="Benchmark progress", unit="%") as pbar:
             # Calculate update amount per check
             last_update_time = start_time
             last_update_percent = 0
-            
+
             # Run until time is up
             while time.time() < end_time:
                 # Get GPU temperature
-                current_temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                current_temp = getTemperature(handle, False)
                 temp_readings.append(current_temp)
-                
+
                 # CUDA timing events
                 start_event = torch.cuda.Event(enable_timing=True)
                 end_event = torch.cuda.Event(enable_timing=True)
                 torch.cuda.synchronize()
-                
+
                 # Record start time and generate image
                 start_event.record()
                 image = pipe(prompt, num_inference_steps=50, guidance_scale=7.5).images[0]
                 end_event.record()
                 torch.cuda.synchronize()
-                
+
                 # Calculate timing
                 gpu_time_ms = start_event.elapsed_time(end_event)
                 total_gpu_time += gpu_time_ms
-                
+
                 # Update counter
                 image_count += 1
-                
+
                 # Sample power usage
                 try:
-                    current_power = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0  # mW to W
+                    current_power = getPowerUsage(handle)
                     power_readings.append(current_power)
                 except:
                     pass
-                
+
                 # Update progress bar
                 current_time = time.time()
                 current_percent = min(100, int((current_time - start_time) / duration * 100))
                 if current_percent > last_update_percent:
                     pbar.update(current_percent - last_update_percent)
                     pbar.set_postfix({
-                        'Images': image_count, 
+                        'Images': image_count,
                         'Temp': f"{current_temp}°C"
                     })
                     last_update_percent = current_percent
-        
+
         # Final temperature reading
-        final_temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        final_temp = getTemperature(handle, True)
         temp_readings.append(final_temp)
-        
+
         # Calculate results
         elapsed = time.time() - start_time
         avg_time_ms = total_gpu_time / image_count if image_count > 0 else 0
         avg_temp = sum(temp_readings) / len(temp_readings)
         max_temp = max(temp_readings)
-        
+
         # Get GPU power info
         try:
-            power_usage = round(pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0, 2)  # mW to W with 2 decimal places
+            power_usage = getPowerUsage(handle)
         except:
             power_usage = None
-        
+
         # Get GPU memory info
         try:
-            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            gpu_memory_total = round(meminfo.total / (1024 * 1024 * 1024), 2)  # bytes to GB
+            gpu_memory_total = getMemoryInfo(handle)
         except:
             gpu_memory_total = None
-        
+
         # Get platform info
         platform_info = get_clean_platform()
-        
+
         # Get CUDA version (acceleration)
-        cuda_version = f"CUDA {torch.version.cuda}" if torch.cuda.is_available() else "N/A"
-        
+        if gpuType == "AMD":
+            cuda_version = f"ROCM {torch.version.hip}" if torch.cuda.is_available() else "N/A"
+        else:
+            cuda_version = f"CUDA {torch.version.cuda}" if torch.cuda.is_available() else "N/A"
+
         # Get torch version
         torch_version = torch.__version__
-        
+
         # Clean up
-        pynvml.nvmlShutdown()
+        handleCleanup()
 
         # Calculate average power
         avg_power = round(sum(power_readings) / len(power_readings), 2) if power_readings else None
@@ -177,10 +249,10 @@ def run_benchmark(pipe, duration):
             "acceleration": cuda_version,
             "torch_version": torch_version
         }
-    
+
     except KeyboardInterrupt:
         # Clean up and return partial results with completed flag set to False
-        pynvml.nvmlShutdown()
+        handleCleanup()
         return {
             "completed": False,  # Flag indicating the benchmark was canceled
             "result": image_count,
@@ -189,7 +261,7 @@ def run_benchmark(pipe, duration):
         }
     except Exception as e:
         # Handle any other errors, clean up, and return error info
-        pynvml.nvmlShutdown()
+        handleCleanup()
         print(f"Error during benchmark: {e}")
         return {
             "completed": False,  # Flag indicating the benchmark failed

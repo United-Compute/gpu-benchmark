@@ -6,8 +6,14 @@ A simple CLI tool to benchmark your GPU's performance across various AI models (
 
 ## Installation
 
+For Nvidia GPUs (CUDA)
 ```bash
 pip install gpu-benchmark
+```
+
+For AMD GPUs (ROCm, currently Linux only)
+```bash
+pip install --extra-index-url https://download.pytorch.org/whl/rocm6.3 gpu-benchmark.[rocm]
 ```
 
 ## Usage
@@ -70,12 +76,12 @@ The tool will:
 - **GPU Power**: Power consumption in watts (W)
 - **GPU Memory**: Total GPU memory in gigabytes (GB)
 - **Platform**: Operating system information
-- **Acceleration**: CUDA version
+- **Acceleration**: CUDA/ROCM version
 - **PyTorch Version**: PyTorch library version
 
 ## Requirements
 
-- CUDA-compatible NVIDIA GPU
+- CUDA-compatible NVIDIA GPU or ROCm-compatible AMD GPU (Linux Only)
 - Python 3.8+
 
 ## Links
